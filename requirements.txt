@@ -1,0 +1,27 @@
+# Core Dependencies
+python-dotenv
+
+# LiveKit & STT Dependencies
+livekit-agents==1.2.18
+livekit
+livekit-plugins-silero
+faster-whisper
+soundfile
+numpy
+
+# Audio Processing
+torch
+torchaudio
+
+# AWS S3
+boto3
+
+# AI/ML Models
+transformers
+google-generativeai
+
+# Utility
+tenacity
+
+# WhisperX (from GitHub)
+whisperx @ git+https://github.com/m-bain/whisperx.git
