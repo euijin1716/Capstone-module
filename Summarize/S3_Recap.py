@@ -58,112 +58,112 @@ def generate_recap(file_id, end_utterance_id=None, input_folder="Request_Recap",
     # S3 경로 설정
     input_s3_key = f"{input_folder}/{file_id}.json"
     
-    try:
+    #try:
     # 1. S3에서 JSON 파일 읽기
-        print(f"S3에서 파일 읽는 중: s3://{BUCKET_NAME}/{input_s3_key}")
-        response = s3_client.get_object(Bucket=BUCKET_NAME, Key=input_s3_key)
-        meeting_log_data = json.loads(response['Body'].read().decode('utf-8'))
+    print(f"S3에서 파일 읽는 중: s3://{BUCKET_NAME}/{input_s3_key}")
+    response = s3_client.get_object(Bucket=BUCKET_NAME, Key=input_s3_key)
+    meeting_log_data = json.loads(response['Body'].read().decode('utf-8'))
 
-        # 2. 대화 내용 추출 및 필터링
-        utterances = meeting_log_data.get('utterances', [])
-        participants = meeting_log_data.get('participants', [])
-        speaker_map = {p['USER_ID']: p.get('name', f"P{i:02d}") for i, p in enumerate(participants)}
+    # 2. 대화 내용 추출 및 필터링
+    utterances = meeting_log_data.get('utterances', [])
+    participants = meeting_log_data.get('participants', [])
+    speaker_map = {p['USER_ID']: p.get('name', f"P{i:02d}") for i, p in enumerate(participants)}
 
-        conversation_text_lines = []
+    conversation_text_lines = []
 
-        found_cutoff = False
-        for utterance in utterances:
-            u_id = utterance.get('id')
-            speaker_id = utterance.get('USER_ID')
-            message = utterance.get('content')
+    found_cutoff = False
+    for utterance in utterances:
+        u_id = utterance.get('id')
+        speaker_id = utterance.get('USER_ID')
+        message = utterance.get('content')
 
-            if speaker_id and message and u_id:
-                speaker_label = speaker_map.get(speaker_id, speaker_id)
-                conversation_text_lines.append(f"[ID: {u_id}] {speaker_label}: {message}")
+        if speaker_id and message and u_id:
+            speaker_label = speaker_map.get(speaker_id, speaker_id)
+            conversation_text_lines.append(f"[ID: {u_id}] {speaker_label}: {message}")
 
-            # end_utterance_id가 지정되어 있고, 현재 ID와 일치하면 중단
-            if end_utterance_id and str(u_id) == str(end_utterance_id):
-                found_cutoff = True
-                break
+        # end_utterance_id가 지정되어 있고, 현재 ID와 일치하면 중단
+        if end_utterance_id and str(u_id) == str(end_utterance_id):
+            found_cutoff = True
+            break
 
-        if end_utterance_id and not found_cutoff:
-            print(f"⚠️ 경고: 지정된 Cut-off ID ({end_utterance_id})를 찾지 못했습니다. 전체 내용을 사용합니다.")
+    if end_utterance_id and not found_cutoff:
+        print(f"⚠️ 경고: 지정된 Cut-off ID ({end_utterance_id})를 찾지 못했습니다. 전체 내용을 사용합니다.")
 
-        conversation_text = "\n".join(conversation_text_lines)
+    conversation_text = "\n".join(conversation_text_lines)
 
-        if not conversation_text:
-            print("❌ 대화 내용이 없습니다.")
-            return None
-
-        print(f"✅ 분석 대상 발화 수: {len(conversation_text_lines)}개")
-
-        # 3. 프롬프트 구성
-        prompt_text = prompts.RECAP_PROMPT.format(input_data=conversation_text)
-
-        # 4. Gemini API 호출
-        model = genai.GenerativeModel(MODEL_NAME)
-        print("--- Gemini API 호출 중 (Single-Shot) ---")
-
-        response = generate_content_with_retry(model, prompt_text)
-
-        # 5. 결과 파싱 및 출력
-        json_string = response.text.strip().replace("```json", "").replace("```", "").strip()
-        print(response)
-        parsed_json = json.loads(json_string)
-
-        print("\n" + "="*40)
-        print("       📋 중간 요약 (Recap)       ")
-        print("="*40)
-        print(f"🔹 현재 주제: {parsed_json.get('current_topic', 'N/A')}")
-        print("\n🔹 지금까지의 흐름:")
-        for idx, item in enumerate(parsed_json.get('summary_so_far', [])):
-            print(f"  {idx+1}. {item}")
-
-        decisions = parsed_json.get('key_decisions', [])
-        if decisions:
-            print("\n🔹 주요 결정 사항:")
-            for item in decisions:
-                print(f"  - {item}")
-
-        print(f"\n💡 Tip: {parsed_json.get('catch_up_tip', '')}")
-        print("="*40 + "\n")
-
-        # 6. 결과 S3 저장
-        # 파일명 변환 로직: _request_recap -> _recap
-        if file_id.endswith("_request_recap"):
-            base_name = file_id.replace("_request_recap", "")
-            output_filename = f"{base_name}_recap.json"
-        else:
-            output_filename = f"{file_id}_recap.json"
-
-        if end_utterance_id:
-            output_filename = output_filename.replace(".json", f"_{end_utterance_id}.json")
-
-        output_s3_key = f"{output_folder}/{output_filename}"
-
-        print(f"S3에 Recap 저장 중: s3://{BUCKET_NAME}/{output_s3_key}")
-        s3_client.put_object(
-            Bucket=BUCKET_NAME,
-            Key=output_s3_key,
-            Body=json.dumps(parsed_json, ensure_ascii=False, indent=2),
-            ContentType='application/json'
-        )
-        print("✅ 저장 완료")
-
-        return parsed_json
-
-    except s3_client.exceptions.NoSuchKey:
-        print(f"오류: S3에서 '{input_s3_key}' 파일을 찾을 수 없습니다.")
+    if not conversation_text:
+        print("❌ 대화 내용이 없습니다.")
         return None
-    except Exception as e:
-        print(f"Recap 생성 중 오류 발생: {e}")
-        # traceback.print_exc() # 필요시 주석 해제
-        return None
+
+    print(f"✅ 분석 대상 발화 수: {len(conversation_text_lines)}개")
+
+    # 3. 프롬프트 구성
+    prompt_text = prompts.RECAP_PROMPT.format(input_data=conversation_text)
+
+    # 4. Gemini API 호출
+    model = genai.GenerativeModel(MODEL_NAME)
+    print("--- Gemini API 호출 중 (Single-Shot) ---")
+
+    response = generate_content_with_retry(model, prompt_text)
+
+    # 5. 결과 파싱 및 출력
+    json_string = response.text.strip().replace("```json", "").replace("```", "").strip()
+    print(response)
+    parsed_json = json.loads(json_string)
+
+    print("\n" + "="*40)
+    print("       📋 중간 요약 (Recap)       ")
+    print("="*40)
+    print(f"🔹 현재 주제: {parsed_json.get('current_topic', 'N/A')}")
+    print("\n🔹 지금까지의 흐름:")
+    for idx, item in enumerate(parsed_json.get('summary_so_far', [])):
+        print(f"  {idx+1}. {item}")
+
+    decisions = parsed_json.get('key_decisions', [])
+    if decisions:
+        print("\n🔹 주요 결정 사항:")
+        for item in decisions:
+            print(f"  - {item}")
+
+    print(f"\n💡 Tip: {parsed_json.get('catch_up_tip', '')}")
+    print("="*40 + "\n")
+
+    # 6. 결과 S3 저장
+    # 파일명 변환 로직: _request_recap -> _recap
+    if file_id.endswith("_request_recap"):
+        base_name = file_id.replace("_request_recap", "")
+        output_filename = f"{base_name}_recap.json"
+    else:
+        output_filename = f"{file_id}_recap.json"
+
+    if end_utterance_id:
+        output_filename = output_filename.replace(".json", f"_{end_utterance_id}.json")
+
+    output_s3_key = f"{output_folder}/{output_filename}"
+
+    print(f"S3에 Recap 저장 중: s3://{BUCKET_NAME}/{output_s3_key}")
+    s3_client.put_object(
+        Bucket=BUCKET_NAME,
+        Key=output_s3_key,
+        Body=json.dumps(parsed_json, ensure_ascii=False, indent=2),
+        ContentType='application/json'
+    )
+    print("✅ 저장 완료")
+
+    return parsed_json
+
+    # except s3_client.exceptions.NoSuchKey:
+    #     print(f"오류: S3에서 '{input_s3_key}' 파일을 찾을 수 없습니다.")
+    #     return None
+    # except Exception as e:
+    #     print(f"Recap 생성 중 오류 발생: {e}")
+    #     # traceback.print_exc() # 필요시 주석 해제
+    #     return None
 
 if __name__ == "__main__":
     # API 키 설정
     try:
-        api_key = os.getenv("GEMINI_API_KEY")
+        api_key = "-"
         if api_key is None:
             raise ValueError("GEMINI_API_KEY 환경 변수가 설정되지 않았습니다.")
         genai.configure(api_key=api_key)

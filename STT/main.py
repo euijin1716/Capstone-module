@@ -67,7 +67,7 @@ class VoteManager:
         self.max_buffer_size = 25
 
         # 제로샷 분류 모델 (한 문장 단위 사용)
-        device = 0 if torch.cuda.is_available() else -1
+        device = "cuda" if torch.cuda.is_available() else -1
         print(f"🧠 [VoteManager] 한국어 레이블 기반 감지 모드 (device={device})")
 
         # ✅ 한국어 문장형 레이블 + hypothesis_template 설정
