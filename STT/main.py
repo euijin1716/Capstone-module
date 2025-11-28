@@ -2,6 +2,7 @@ import asyncio
 import os
 import datetime
 import json
+from botocore.exceptions import ClientError
 from dotenv import load_dotenv
 
 # [AI & ML 라이브러리]
@@ -402,10 +403,10 @@ async def entrypoint(ctx: JobContext):
                         # python Summarize/S3_Recap.py --file_ids {file_id} --input_folder Request_Recap --output_folder Recap
                         
                         # 현재 작업 디렉토리 기준 상대 경로
-                        script_path = os.path.join("Summarize", "S3_Recap.py")
-                        
+                        script_path = os.path.join("../Summarize", "S3_Recap.py")
+
                         command = [
-                            "python", script_path,
+                            r"C:\Users\salus\IdeaProjects\untitled1\.venv\Scripts\python.exe", script_path,
                             "--file_id", file_id,
                             "--input_folder", "Request_Recap",
                             "--output_folder", "Recap"
@@ -415,22 +416,26 @@ async def entrypoint(ctx: JobContext):
                             # 비동기로 서브프로세스 실행 (결과 기다리지 않음 or 기다림 선택)
                             # 여기서는 실행만 시켜두고 로그만 확인
                             process = await asyncio.create_subprocess_exec(
-                                *command,
-                                stdout=asyncio.subprocess.PIPE,
-                                stderr=asyncio.subprocess.PIPE
+                                *command#,
+                                #stdout=asyncio.subprocess.PIPE,
+                                #stderr=asyncio.subprocess.PIPE
                             )
                             print(f"🚀 S3_Recap.py 실행됨 (PID: {process.pid})")
                             
                             # (선택) 출력을 실시간으로 보거나 나중에 확인
-                            stdout, stderr = await process.communicate()
-                            if stdout: print(f"[S3_Recap] {stdout.decode()}")
-                            if stderr: print(f"[S3_Recap Error] {stderr.decode()}")
+                            #stdout, stderr = await process.communicate()
+                            #if stdout: print(f"[S3_Recap] {stdout.decode()}")
+                            #if stderr: print(f"[S3_Recap Error] {stderr.decode()}")
                             
                             # 3. 결과 S3에서 읽어오기
                             # 예상되는 파일명: Recap/{base_name}_recap.json
                             recap_key = f"Recap/{base_name}_recap.json"
-                            
-                            recap_data = await transcript_logger.s3_uploader.read_json(recap_key)
+
+                            recap_data = await fetch_recap_with_retry(transcript_logger, recap_key)
+                            if recap_data is None:
+                            # 여기서 포기 처리 / 로그 / 예외 등 원하는 대로
+                                print("❌ Recap 생성 실패(시간 초과)")
+                                return
                             
                             if recap_data:
                                 print(f"✅ Recap 데이터 S3 로드 성공 -> LiveKit 전송 (Target: {target_id})")
@@ -471,6 +476,39 @@ async def entrypoint(ctx: JobContext):
         if upload_task: upload_task.cancel()
         await transcript_logger.upload_to_s3()
         ctx.shutdown()
+
+
+
+async def fetch_recap_with_retry(transcript_logger, recap_key: str,
+                                 max_retries: int = 10,
+                                 delay_seconds: int = 30):
+    """
+    S3에서 recap JSON을 읽되, 파일이 아직 없으면 기다렸다가 재시도함.
+    - max_retries: 최대 재시도 횟수
+    - delay_seconds: 각 시도 사이 대기 시간(초)
+    """
+    for attempt in range(1, max_retries + 1):
+        try:
+            recap_data = await transcript_logger.s3_uploader.read_json(recap_key)
+            if recap_data is not None:
+                print(f"✅ Recap found on attempt {attempt}")
+                return recap_data
+            # read_json이 '없으면 None'을 리턴하는 형태라면 여기로 떨어짐
+            print(f"⏳ Recap not ready yet (attempt {attempt}/{max_retries}), retrying in {delay_seconds}s...")
+        except ClientError as e:
+            code = e.response.get("Error", {}).get("Code")
+            if code == "NoSuchKey":
+                # S3에 아직 파일이 없을 때
+                print(f"⏳ Recap object not found (attempt {attempt}/{max_retries}), retrying in {delay_seconds}s...")
+            else:
+                # 다른 S3 에러면 바로 터뜨림
+                raise
+
+        # 여기까지 왔으면 아직 파일이 없는 상황 → 잠깐 대기
+        await asyncio.sleep(delay_seconds)
+
+    print("⚠️ Recap still not available after all retries.")
+    return None
 
 if __name__ == "__main__":
     cli.run_app(WorkerOptions(entrypoint_fnc=entrypoint))

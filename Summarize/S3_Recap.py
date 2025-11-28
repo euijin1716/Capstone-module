@@ -7,12 +7,14 @@ import google.generativeai as genai
 import json
 import argparse
 import boto3
-from botocore.exceptions import ClientError
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 from google.api_core import exceptions
+from dotenv import load_dotenv
 
 # Import prompts from external file
 import prompts
+
+load_dotenv()
 
 # Configuration
 MODEL_NAME = "models/gemini-2.5-pro"
@@ -57,38 +59,38 @@ def generate_recap(file_id, end_utterance_id=None, input_folder="Request_Recap",
     input_s3_key = f"{input_folder}/{file_id}.json"
     
     try:
-        # 1. S3에서 JSON 파일 읽기
+    # 1. S3에서 JSON 파일 읽기
         print(f"S3에서 파일 읽는 중: s3://{BUCKET_NAME}/{input_s3_key}")
         response = s3_client.get_object(Bucket=BUCKET_NAME, Key=input_s3_key)
         meeting_log_data = json.loads(response['Body'].read().decode('utf-8'))
-        
+
         # 2. 대화 내용 추출 및 필터링
         utterances = meeting_log_data.get('utterances', [])
         participants = meeting_log_data.get('participants', [])
         speaker_map = {p['USER_ID']: p.get('name', f"P{i:02d}") for i, p in enumerate(participants)}
-        
+
         conversation_text_lines = []
-        
+
         found_cutoff = False
         for utterance in utterances:
             u_id = utterance.get('id')
-            speaker_id = utterance.get('USER_ID') 
+            speaker_id = utterance.get('USER_ID')
             message = utterance.get('content')
-            
+
             if speaker_id and message and u_id:
                 speaker_label = speaker_map.get(speaker_id, speaker_id)
                 conversation_text_lines.append(f"[ID: {u_id}] {speaker_label}: {message}")
-            
+
             # end_utterance_id가 지정되어 있고, 현재 ID와 일치하면 중단
             if end_utterance_id and str(u_id) == str(end_utterance_id):
                 found_cutoff = True
                 break
-        
+
         if end_utterance_id and not found_cutoff:
             print(f"⚠️ 경고: 지정된 Cut-off ID ({end_utterance_id})를 찾지 못했습니다. 전체 내용을 사용합니다.")
 
         conversation_text = "\n".join(conversation_text_lines)
-        
+
         if not conversation_text:
             print("❌ 대화 내용이 없습니다.")
             return None
@@ -97,17 +99,18 @@ def generate_recap(file_id, end_utterance_id=None, input_folder="Request_Recap",
 
         # 3. 프롬프트 구성
         prompt_text = prompts.RECAP_PROMPT.format(input_data=conversation_text)
-        
+
         # 4. Gemini API 호출
         model = genai.GenerativeModel(MODEL_NAME)
         print("--- Gemini API 호출 중 (Single-Shot) ---")
-        
+
         response = generate_content_with_retry(model, prompt_text)
-        
+
         # 5. 결과 파싱 및 출력
         json_string = response.text.strip().replace("```json", "").replace("```", "").strip()
+        print(response)
         parsed_json = json.loads(json_string)
-        
+
         print("\n" + "="*40)
         print("       📋 중간 요약 (Recap)       ")
         print("="*40)
@@ -115,16 +118,16 @@ def generate_recap(file_id, end_utterance_id=None, input_folder="Request_Recap",
         print("\n🔹 지금까지의 흐름:")
         for idx, item in enumerate(parsed_json.get('summary_so_far', [])):
             print(f"  {idx+1}. {item}")
-            
+
         decisions = parsed_json.get('key_decisions', [])
         if decisions:
             print("\n🔹 주요 결정 사항:")
             for item in decisions:
                 print(f"  - {item}")
-        
+
         print(f"\n💡 Tip: {parsed_json.get('catch_up_tip', '')}")
         print("="*40 + "\n")
-        
+
         # 6. 결과 S3 저장
         # 파일명 변환 로직: _request_recap -> _recap
         if file_id.endswith("_request_recap"):
@@ -135,9 +138,9 @@ def generate_recap(file_id, end_utterance_id=None, input_folder="Request_Recap",
 
         if end_utterance_id:
             output_filename = output_filename.replace(".json", f"_{end_utterance_id}.json")
-            
+
         output_s3_key = f"{output_folder}/{output_filename}"
-        
+
         print(f"S3에 Recap 저장 중: s3://{BUCKET_NAME}/{output_s3_key}")
         s3_client.put_object(
             Bucket=BUCKET_NAME,
@@ -146,7 +149,7 @@ def generate_recap(file_id, end_utterance_id=None, input_folder="Request_Recap",
             ContentType='application/json'
         )
         print("✅ 저장 완료")
-        
+
         return parsed_json
 
     except s3_client.exceptions.NoSuchKey:
@@ -176,5 +179,6 @@ if __name__ == "__main__":
     parser.add_argument("--output_folder", default="Recap", help="S3 Output Folder")
     
     args = parser.parse_args()
-    
+
+    print("Recap 함수 시작")
     generate_recap(args.file_id, args.end_id, args.input_folder, args.output_folder)
