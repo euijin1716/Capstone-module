@@ -4,6 +4,11 @@ import datetime
 import json
 from botocore.exceptions import ClientError
 from dotenv import load_dotenv
+import requests
+import sys
+
+#최종 summarize할거면 1 끌거면 0
+Summarize_enable = 1
 
 # [AI & ML 라이브러리]
 import google.generativeai as genai
@@ -38,6 +43,35 @@ else:
 
 
 
+
+def update_session_status(room_name, status):
+    """
+    방 이름(room_name)으로 세션 상태를 업데이트합니다.
+    status: "BEFORE_START", "IN_PROGRESS", "COMPLETED" 중 하나
+    """
+    # URL에서 ID가 빠지고 /status로 변경됨
+    url = "http://localhost:8080/api/sessions/status"
+    
+    headers = {
+        "Content-Type": "application/json"
+    }
+    
+    # Body에 roomName 포함
+    data = {
+        "roomName": room_name,
+        "status": status
+    }
+
+    try:
+        response = requests.patch(url, json=data, headers=headers)
+        
+        if response.status_code == 200:
+            print(f"성공: 방 '{room_name}'의 상태가 {status}로 변경되었습니다.")
+        else:
+            print(f"실패: {response.status_code} - {response.text}")
+            
+    except Exception as e:
+        print(f"에러 발생: {e}")
 
 class VoteManager:
     """
@@ -364,8 +398,59 @@ async def entrypoint(ctx: JobContext):
         def on_participant_disconnected(participant):
             print(f"👋 참가자 퇴장: {participant.identity}")
             if len(ctx.room.remote_participants) == 0:
-                print("🚪 모든 참가자 퇴장 -> 즉시 S3 업로드")
-                asyncio.create_task(transcript_logger.upload_to_s3())
+                print("🚪 모든 참가자 퇴장 -> 종료 프로세스 시작")
+                
+                async def shutdown_sequence():
+                    # 1. Upload raw logs
+                    await transcript_logger.upload_to_s3()
+                    
+                    if Summarize_enable == 1:
+                        print("📝 [Summarize] 요약 프로세스 시작")
+                        room_name = ctx.room.name
+                        
+                        # 2. Status -> IN_PROGRESS
+                        update_session_status(room_name, "IN_PROGRESS")
+                        
+                        # 3. Run Summarization
+                        base_name = os.path.basename(transcript_logger.filename).replace('.jsonl', '')
+                        script_path = os.path.join("../Summarize", "S3_Summarization.py")
+                        script_path = os.path.abspath(script_path)
+                        
+                        command = [
+                            r"C:\Users\salus\IdeaProjects\untitled1\.venv\Scripts\python.exe", script_path,
+                            "--file_ids", base_name
+                        ]
+                        
+                        print(f"🚀 S3_Summarization.py 실행: {' '.join(command)}")
+                        
+                        try:
+                            process = await asyncio.create_subprocess_exec(
+                                *command,
+                                stdout=asyncio.subprocess.PIPE,
+                                stderr=asyncio.subprocess.PIPE
+                            )
+                            
+                            stdout, stderr = await process.communicate()
+                            
+                            if stdout:
+                                print(f"[S3_Summarization Output]\n{stdout.decode()}")
+                            if stderr:
+                                print(f"[S3_Summarization Error]\n{stderr.decode()}")
+                            
+                            if process.returncode == 0:
+                                print("✅ 요약 완료")
+                                # 4. Status -> COMPLETED
+                                update_session_status(room_name, "COMPLETED")
+                            else:
+                                print(f"❌ 요약 스크립트 실패 (Exit Code: {process.returncode})")
+                                
+                        except Exception as e:
+                            print(f"❌ 요약 프로세스 실행 중 에러: {e}")
+                    
+                    print("🛑 Agent 종료")
+                    ctx.shutdown()
+
+                asyncio.create_task(shutdown_sequence())
 
         @ctx.room.on("data_received")
         def on_data_received(data_packet: rtc.DataPacket):

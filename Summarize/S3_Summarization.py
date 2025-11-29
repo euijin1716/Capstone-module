@@ -12,9 +12,12 @@ import boto3
 from botocore.exceptions import ClientError
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 from google.api_core import exceptions
+from dotenv import load_dotenv
 
 # Import prompts from external file
 import prompts
+
+load_dotenv()
 
 # Configuration
 MODEL_NAME = "models/gemini-2.5-pro"
@@ -178,7 +181,7 @@ def analyze_details_and_consolidate(file_id, meeting_log_data):
     print(f"{'='*80}\n")
     
     # S3 경로 설정 (최종 결과만)
-    final_s3_key = f"meeting_logs/{file_id}_final.json"
+    final_s3_key = f"Summarize/{file_id}_final.json"
     
     try:
         topics_list = meeting_log_data.get('skeleton', {}).get('topics', [])
@@ -329,7 +332,7 @@ def analyze_details_and_consolidate(file_id, meeting_log_data):
 if __name__ == "__main__":
     # API 키 설정
     try:
-        api_key = os.getenv("GEMINI_API_KEY")
+        api_key = "-"
         if api_key is None:
             raise ValueError("GEMINI_API_KEY 환경 변수가 설정되지 않았습니다.")
         genai.configure(api_key=api_key)
