@@ -13,6 +13,8 @@ from botocore.exceptions import ClientError
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 from google.api_core import exceptions
 from dotenv import load_dotenv
+import requests
+import sys
 
 # Import prompts from external file
 import prompts
@@ -27,6 +29,36 @@ BUCKET_NAME = "hedj-s3-1"    # S3 버킷 이름
 
 # S3 Client 초기화
 s3_client = boto3.client('s3')
+
+
+def update_session_status(room_name, status):
+    """
+    방 이름(room_name)으로 세션 상태를 업데이트합니다.
+    status: "BEFORE_START", "IN_PROGRESS", "COMPLETED" 중 하나
+    """
+    # URL에서 ID가 빠지고 /status로 변경됨
+    url = "http://localhost:8080/api/sessions/status"
+
+    headers = {
+        "Content-Type": "application/json"
+    }
+
+    # Body에 roomName 포함
+    data = {
+        "roomName": room_name,
+        "status": status
+    }
+
+    try:
+        response = requests.patch(url, json=data, headers=headers)
+
+        if response.status_code == 200:
+            print(f"성공: 방 '{room_name}'의 상태가 {status}로 변경되었습니다.")
+        else:
+            print(f"실패: {response.status_code} - {response.text}")
+
+    except Exception as e:
+        print(f"에러 발생: {e}")
 
 # ==============================================================================
 # 1. API 호출 헬퍼 함수 (Retry 적용)
@@ -333,7 +365,8 @@ def analyze_details_and_consolidate(file_id, meeting_log_data):
             
         print(f"🎉 [최종 완료] 회의록 생성이 끝났습니다!")
         print(f"💾 파일 저장 경로: s3://{BUCKET_NAME}/{final_s3_key}")
-        return True
+        sys.exit(0)
+        #return True
 
     except Exception as e:
         print(f"상세 분석 중 오류 발생: {e}")
@@ -379,3 +412,4 @@ if __name__ == "__main__":
             print(f"⛔ {file_id}: 상세 분석 실패")
         
         print("\n" + "="*80 + "\n")
+

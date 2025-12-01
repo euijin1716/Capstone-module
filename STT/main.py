@@ -426,18 +426,20 @@ async def entrypoint(ctx: JobContext):
                         try:
                             process = await asyncio.create_subprocess_exec(
                                 *command,
-                                stdout=asyncio.subprocess.PIPE,
-                                stderr=asyncio.subprocess.PIPE
+                                #stdout=asyncio.subprocess.PIPE,
+                                #stderr=asyncio.subprocess.PIPE
                             )
                             
                             stdout, stderr = await process.communicate()
                             
-                            if stdout:
-                                print(f"[S3_Summarization Output]\n{stdout.decode()}")
-                            if stderr:
-                                print(f"[S3_Summarization Error]\n{stderr.decode()}")
-                            
-                            if process.returncode == 0:
+                            # if stdout:
+                            #     print(f"[S3_Summarization Output]\n{stdout.decode()}")
+                            # if stderr:
+                            #     print(f"[S3_Summarization Error]\n{stderr.decode()}")
+
+                            rc = await process.wait()
+
+                            if rc == 1:
                                 print("✅ 요약 완료")
                                 # 4. Status -> COMPLETED
                                 update_session_status(room_name, "COMPLETED")
