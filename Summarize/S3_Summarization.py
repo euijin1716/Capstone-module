@@ -186,7 +186,11 @@ def analyze_details_and_consolidate(file_id, meeting_log_data):
     try:
         topics_list = meeting_log_data.get('skeleton', {}).get('topics', [])
         all_utterances = meeting_log_data.get('utterances', [])
+        participants = meeting_log_data.get('participants', [])
         final_topics = []
+        
+        # Participants 정보를 JSON 문자열로 변환
+        participants_info = json.dumps(participants, ensure_ascii=False, indent=2)
         
         if not topics_list:
             print("⚠️ 처리할 토픽이 없습니다. Step 1 결과를 확인하세요.")
@@ -230,12 +234,20 @@ def analyze_details_and_consolidate(file_id, meeting_log_data):
 * **핵심 논의 구간**: ID {start_id}번 ~ {end_id}번 발화
 * **참고 문맥(Buffer)**: 핵심 구간의 앞뒤로 각각 {BUFFER_SIZE}개의 발화가 문맥 파악을 위해 추가되었습니다.
 
+# 참가자 정보
+다음은 회의 참가자 목록입니다. action_items의 assignee를 지정할 때 **반드시** 이 정보를 참고하세요.
+{participants_info}
+
 # 작업 지시
 제공된 [대화 내용]을 읽고, **핵심 논의 구간**을 중심으로 다음 내용을 추출하세요.
 
 1. **details (상세 내용)**: 아래 [작성 지침]에 정의된 구조대로 작성하세요.
 2. **segment_decisions (결정 사항)**: 이 구간에서 확정된 합의나 결정 사항이 있다면 명확한 문장으로 추출하세요. (없으면 빈 리스트)
-3. **segment_action_items (실행 항목)**: 구체적인 할 일(Task), 담당자(Assignee), 기한(Due Date)을 추출하세요. (없으면 빈 리스트)
+3. **segment_action_items (실행 항목)**: 구체적인 할 일(Task), 담당자(Assignee), 기한(Due Date)을 추출하세요.
+   - **중요:** assignee는 반드시 위 [참가자 정보]의 'name' 필드 값을 사용하세요. USER_ID를 사용하지 마세요.
+   - 대화에서 "제가 할게요" 같은 표현이 나오면, 해당 발화자의 USER_ID를 확인하고 [참가자 정보]에서 매칭되는 name을 찾아 사용하세요.
+   - 담당자가 불명확하거나 [참가자 정보]에서 찾을 수 없으면 '미정'으로 표기하세요.
+   - (없으면 빈 리스트)
 
 # 작성 지침 (JSON Schema & Guide)
 {type_instruction}
@@ -252,7 +264,7 @@ def analyze_details_and_consolidate(file_id, meeting_log_data):
   "segment_action_items": [
     {{
       "task": "구체적인 작업 내용",
-      "assignee": "담당자 (또는 '미정')",
+      "assignee": "담당자 이름 (또는 '미정')",
       "due_date": "마감기한 (또는 '미정')"
     }}
   ]
